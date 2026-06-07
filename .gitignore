@@ -1,3 +1,5 @@
 *.exe
 *.o
 parser
+node_modules
+package-lock.json
