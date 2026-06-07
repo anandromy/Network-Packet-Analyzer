@@ -1,0 +1,6 @@
+PACKET STATISTICS
+=================
+Total Packets : 11
+TCP Packets : 8
+UDP Packets : 0
+ICMP Packets : 0
