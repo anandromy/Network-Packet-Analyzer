@@ -267,7 +267,7 @@
 
   .log-entry {
     display: grid;
-    grid-template-columns: 56px 60px 1fr 80px;
+    grid-template-columns: 60px 1fr 80px 80px;
     gap: 0;
     padding: 0.28rem 2rem;
     align-items: center;
@@ -275,6 +275,13 @@
     animation: slideIn 0.18s ease-out;
     transition: background 0.1s;
   }
+
+  .log-count {
+    color: var(--amber);
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    text-align: center;
+}
 
   .log-entry:hover { background: var(--surface2); }
 
@@ -455,90 +462,98 @@
 
 <script>
   let ws, capturing = false;
-  const MAX_ENTRIES = 200;
+  const flows = new Map();
 
   function connect() {
     ws = new WebSocket(`ws://${location.host}`);
 
     ws.onopen = () => {
-      document.getElementById('wsDot').classList.add('connected');
-      document.getElementById('wsText').textContent = 'Connected';
+        document.getElementById('wsDot').classList.add('connected');
+        document.getElementById('wsText').textContent = 'Connected';
     };
 
     ws.onclose = () => {
-      document.getElementById('wsDot').classList.remove('connected');
-      document.getElementById('wsText').textContent = 'Disconnected — retrying...';
-      setTimeout(connect, 2000);
+        document.getElementById('wsDot').classList.remove('connected');
+        document.getElementById('wsText').textContent = 'Disconnected — retrying...';
+        setTimeout(connect, 2000);
     };
 
     ws.onmessage = (e) => {
-      let msg;
-      try { msg = JSON.parse(e.data); } catch { return; }
-      handle(msg);
+        let msg;
+        try { msg = JSON.parse(e.data); } catch { return; }
+        handle(msg);
     };
-  }
+}
 
   function handle(msg) {
     switch (msg.type) {
-
-      case 'packet':
-        addEntry(msg);
-        document.getElementById('sTotal').textContent = msg.num;
-        break;
-
-      case 'stats':
-        document.getElementById('sTotal').textContent = msg.total;
-        document.getElementById('sTcp').textContent   = msg.tcp;
-        document.getElementById('sUdp').textContent   = msg.udp;
-        document.getElementById('sIcmp').textContent  = msg.icmp;
-        break;
-
-      case 'status':
-        document.getElementById('statusMsg').textContent = msg.msg;
-        break;
-
-      case 'stopped':
-        setCapturing(false);
-        document.getElementById('statusMsg').textContent = 'Capture stopped';
-        break;
+        case 'packet':
+            updateFlow(msg);
+            document.getElementById('sTotal').textContent = msg.num;
+            break;
+        case 'stats':
+            document.getElementById('sTotal').textContent = msg.total;
+            document.getElementById('sTcp').textContent   = msg.tcp;
+            document.getElementById('sUdp').textContent   = msg.udp;
+            document.getElementById('sIcmp').textContent  = msg.icmp;
+            break;
+        case 'status':
+            document.getElementById('statusMsg').textContent = msg.msg;
+            break;
+        case 'stopped':
+            setCapturing(false);
+            document.getElementById('statusMsg').textContent = 'Capture stopped';
+            break;
     }
-  }
+}
 
-  function addEntry(p) {
+  function updateFlow(p) {
+    const proto = (p.proto || 'OTHER').toUpperCase();
+    const src   = p.src !== undefined ? p.src : '—';
+    const dst   = p.dst !== undefined ? p.dst : '—';
+    const key   = `${proto}:${src}→${dst}`;
+
+    if (flows.has(key)) {
+        const f = flows.get(key);
+        f.count++;
+        f.bytes += p.len;
+    } else {
+        flows.set(key, { proto, src, dst, count: 1, bytes: p.len });
+    }
+
+    // Update protocol counters
+    const tcpEl  = document.getElementById('sTcp');
+    const udpEl  = document.getElementById('sUdp');
+    const icmpEl = document.getElementById('sIcmp');
+    if (proto === 'TCP')  tcpEl.textContent  = parseInt(tcpEl.textContent)  + 1;
+    if (proto === 'UDP')  udpEl.textContent  = parseInt(udpEl.textContent)  + 1;
+    if (proto === 'ICMP') icmpEl.textContent = parseInt(icmpEl.textContent) + 1;
+
+    renderFlows();
+}
+
+  function renderFlows() {
     const stream = document.getElementById('logStream');
     const empty  = document.getElementById('emptyState');
     if (empty) empty.remove();
 
-    // Trim old entries
-    while (stream.children.length >= MAX_ENTRIES) {
-      stream.removeChild(stream.firstChild);
-    }
+    // Sort by count descending
+    const sorted = [...flows.values()].sort((a, b) => b.count - a.count);
 
-    const proto = (p.proto || 'OTHER').toUpperCase();
-    const badgeClass = { TCP:'proto-tcp', UDP:'proto-udp', ICMP:'proto-icmp' }[proto] || 'proto-other';
-
-    let ports = '—';
-    if (p.src !== undefined && p.dst !== undefined) {
-      ports = `${p.src}<span class="arrow">→</span>${p.dst}`;
-    }
-
-    // Update running stat counts
-    if (proto === 'TCP')  document.getElementById('sTcp').textContent  = parseInt(document.getElementById('sTcp').textContent)  + 1;
-    if (proto === 'UDP')  document.getElementById('sUdp').textContent  = parseInt(document.getElementById('sUdp').textContent)  + 1;
-    if (proto === 'ICMP') document.getElementById('sIcmp').textContent = parseInt(document.getElementById('sIcmp').textContent) + 1;
-
-    const row = document.createElement('div');
-    row.className = 'log-entry';
-    row.innerHTML = `
-      <span class="log-num">#${p.num}</span>
-      <span class="proto-badge ${badgeClass}">${proto}</span>
-      <span class="log-ports">${ports}</span>
-      <span class="log-len">${p.len} B</span>
-    `;
-
-    stream.appendChild(row);
-    stream.scrollTop = stream.scrollHeight;
-  }
+    stream.innerHTML = '';
+    sorted.forEach(f => {
+        const badgeClass = { TCP:'proto-tcp', UDP:'proto-udp', ICMP:'proto-icmp' }[f.proto] || 'proto-other';
+        const row = document.createElement('div');
+        row.className = 'log-entry';
+        row.innerHTML = `
+            <span class="proto-badge ${badgeClass}">${f.proto}</span>
+            <span class="log-ports">${f.src}<span class="arrow"> → </span>${f.dst}</span>
+            <span class="log-count">×${f.count}</span>
+            <span class="log-len">${f.bytes} B</span>
+        `;
+        stream.appendChild(row);
+    });
+}
 
   function setCapturing(on) {
     capturing = on;
@@ -547,30 +562,30 @@
     document.getElementById('statusText').textContent = on ? 'Capturing' : 'Idle';
     document.getElementById('btnStart').disabled = on;
     document.getElementById('btnStop').disabled  = !on;
-  }
+}
 
   function startCapture() {
     if (!ws || ws.readyState !== 1) return;
     const device = document.getElementById('ifaceInput').value.trim() || null;
     ws.send(JSON.stringify({ action: 'start', device }));
 
-    // Reset counts
     ['sTotal','sTcp','sUdp','sIcmp'].forEach(id =>
-      document.getElementById(id).textContent = '0'
+        document.getElementById(id).textContent = '0'
     );
+    flows.clear();
 
     setCapturing(true);
-  }
+}
 
   function stopCapture() {
     if (!ws || ws.readyState !== 1) return;
     ws.send(JSON.stringify({ action: 'stop' }));
-  }
+}
 
   function clearLog() {
-    const stream = document.getElementById('logStream');
-    stream.innerHTML = '';
-  }
+    flows.clear();
+    document.getElementById('logStream').innerHTML = '';
+}
 
   connect();
 </script>
