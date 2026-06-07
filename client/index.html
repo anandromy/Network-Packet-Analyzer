@@ -267,14 +267,14 @@
 
   .log-entry {
     display: grid;
-    grid-template-columns: 60px 1fr 80px 80px;
+    grid-template-columns: 60px 1fr 110px 80px 80px;
     gap: 0;
     padding: 0.28rem 2rem;
     align-items: center;
     border-bottom: 1px solid transparent;
     animation: slideIn 0.18s ease-out;
     transition: background 0.1s;
-  }
+}
 
   .log-count {
     color: var(--amber);
@@ -323,6 +323,39 @@
     font-size: 0.7rem;
     text-align: right;
   }
+
+  .threat-safe {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    background: rgba(74,222,128,0.12);
+    color: var(--udp);
+}
+
+.threat-suspicious {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    background: rgba(251,113,133,0.15);
+    color: var(--icmp);
+}
+
+.threat-unknown {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border-radius: 3px;
+    font-size: 0.65rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    background: rgba(148,163,184,0.1);
+    color: var(--other);
+}
 
   /* ── Status bar ── */
   .statusbar {
@@ -508,20 +541,20 @@
 }
 
   function updateFlow(p) {
-    const proto = (p.proto || 'OTHER').toUpperCase();
-    const src   = p.src !== undefined ? p.src : '—';
-    const dst   = p.dst !== undefined ? p.dst : '—';
-    const key   = `${proto}:${src}→${dst}`;
+    const proto  = (p.proto || 'OTHER').toUpperCase();
+    const src    = p.src !== undefined ? p.src : '—';
+    const dst    = p.dst !== undefined ? p.dst : '—';
+    const threat = p.threat || 'UNKNOWN';
+    const key    = `${proto}:${src}→${dst}`;
 
     if (flows.has(key)) {
         const f = flows.get(key);
         f.count++;
         f.bytes += p.len;
     } else {
-        flows.set(key, { proto, src, dst, count: 1, bytes: p.len });
+        flows.set(key, { proto, src, dst, threat, count: 1, bytes: p.len });
     }
 
-    // Update protocol counters
     const tcpEl  = document.getElementById('sTcp');
     const udpEl  = document.getElementById('sUdp');
     const icmpEl = document.getElementById('sIcmp');
@@ -537,23 +570,29 @@
     const empty  = document.getElementById('emptyState');
     if (empty) empty.remove();
 
-    // Sort by count descending
     const sorted = [...flows.values()].sort((a, b) => b.count - a.count);
 
     stream.innerHTML = '';
     sorted.forEach(f => {
         const badgeClass = { TCP:'proto-tcp', UDP:'proto-udp', ICMP:'proto-icmp' }[f.proto] || 'proto-other';
+        const threatClass = {
+            'SAFE':       'threat-safe',
+            'SUSPICIOUS': 'threat-suspicious',
+            'UNKNOWN':    'threat-unknown'
+        }[f.threat] || 'threat-unknown';
+
         const row = document.createElement('div');
         row.className = 'log-entry';
         row.innerHTML = `
             <span class="proto-badge ${badgeClass}">${f.proto}</span>
             <span class="log-ports">${f.src}<span class="arrow"> → </span>${f.dst}</span>
+            <span class="${threatClass}">${f.threat}</span>
             <span class="log-count">×${f.count}</span>
             <span class="log-len">${f.bytes} B</span>
         `;
         stream.appendChild(row);
     });
-}
+  }
 
   function setCapturing(on) {
     capturing = on;

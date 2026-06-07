@@ -3,10 +3,10 @@
 #include <fstream>
 #include <vector>
 #include <string>
+#include <set>
 #include <csignal>
 using namespace std;
 
-// ── Globals for Ctrl+C handling ──────────────────────────────────
 static pcap_t* g_handle = nullptr;
 static Stats   g_stats;
 
@@ -14,15 +14,28 @@ static void sigHandler(int) {
     if (g_handle) pcap_breakloop(g_handle);
 }
 
+// ── Classify by port ─────────────────────────────────────────────
+static string classify(int src, int dst) {
+    set<int> suspicious = {4444, 1337, 31337, 23, 445, 135, 6666, 6667, 5555, 1234};
+    set<int> safe       = {80, 443, 53, 123, 3000, 22, 8080, 8443};
+
+    if (suspicious.count(src) || suspicious.count(dst)) return "SUSPICIOUS";
+    if (safe.count(src)       || safe.count(dst))       return "SAFE";
+    return "UNKNOWN";
+}
+
 // ── JSON output helpers ───────────────────────────────────────────
 static void emitPacket(const Stats& s, unsigned int len,
                        const string& proto,
                        int src = -1, int dst = -1)
 {
+    string threat = (src >= 0) ? classify(src, dst) : "UNKNOWN";
+
     cout << "{\"type\":\"packet\""
-         << ",\"num\":"   << s.total
-         << ",\"len\":"   << len
-         << ",\"proto\":\"" << proto << "\"";
+         << ",\"num\":"    << s.total
+         << ",\"len\":"    << len
+         << ",\"proto\":\"" << proto << "\""
+         << ",\"threat\":\"" << threat << "\"";
     if (src >= 0) cout << ",\"src\":" << src << ",\"dst\":" << dst;
     cout << "}\n";
     cout.flush();
@@ -43,7 +56,7 @@ static void emitStats(const Stats& s) {
     cout.flush();
 }
 
-// ── Core packet parser (shared by file + live) ───────────────────
+// ── Core packet parser ────────────────────────────────────────────
 void PacketParser::parsePacket(const unsigned char* pkt,
                                 unsigned int len, Stats& stats)
 {
@@ -56,8 +69,7 @@ void PacketParser::parsePacket(const unsigned char* pkt,
 
     unsigned short etherType = (pkt[12] << 8) | pkt[13];
     if (etherType != 0x0800) return;
-
-    if (len < 34) return;
+    if (len < 34)            return;
 
     const unsigned char* ip = pkt + 14;
     unsigned int ipHLen     = (ip[0] & 0x0F) * 4;
@@ -68,9 +80,6 @@ void PacketParser::parsePacket(const unsigned char* pkt,
         const unsigned char* tcp = ip + ipHLen;
         int src = (tcp[0] << 8) | tcp[1];
         int dst = (tcp[2] << 8) | tcp[3];
-
-        if (src != 3000 && dst != 3000) return;
-
         emitPacket(stats, len, "TCP", src, dst);
     }
     else if (proto == 17 && len >= 14u + ipHLen + 4u) {
@@ -86,7 +95,6 @@ void PacketParser::parsePacket(const unsigned char* pkt,
     }
 }
 
-// ── pcap_loop callback ───────────────────────────────────────────
 void PacketParser::packetHandler(unsigned char* userData,
                                   const struct pcap_pkthdr* pkthdr,
                                   const unsigned char* packet)
@@ -95,7 +103,10 @@ void PacketParser::packetHandler(unsigned char* userData,
     parsePacket(packet, pkthdr->caplen, *stats);
 }
 
-// ── File mode ────────────────────────────────────────────────────
+static void printStats(const Stats& s) {
+    emitStats(s);
+}
+
 void PacketParser::parseFile(const char* filename)
 {
     ifstream file(filename, ios::binary);
@@ -112,9 +123,9 @@ void PacketParser::parseFile(const char* filename)
     char packetHeader[16];
     while (file.read(packetHeader, 16)) {
         unsigned int capturedLength =
-            (unsigned char)packetHeader[8]        |
-            ((unsigned char)packetHeader[9]  << 8) |
-            ((unsigned char)packetHeader[10] << 16)|
+            (unsigned char)packetHeader[8]         |
+            ((unsigned char)packetHeader[9]  << 8)  |
+            ((unsigned char)packetHeader[10] << 16) |
             ((unsigned char)packetHeader[11] << 24);
 
         vector<unsigned char> buf(capturedLength);
@@ -124,12 +135,12 @@ void PacketParser::parseFile(const char* filename)
     emitStats(stats);
 }
 
-// ── Live mode ────────────────────────────────────────────────────
 void PacketParser::parseLive(const char* device)
 {
-    g_stats = Stats{};
     char errbuf[PCAP_ERRBUF_SIZE];
     string selected;
+
+    g_stats = Stats{};
 
     if (!device) {
         pcap_if_t* alldevs;
@@ -137,7 +148,6 @@ void PacketParser::parseLive(const char* device)
             emitStatus("No devices found — run with sudo.");
             return;
         }
-        // Emit available interfaces as JSON
         cout << "{\"type\":\"interfaces\",\"list\":[";
         int i = 0;
         for (auto* d = alldevs; d; d = d->next) {
