@@ -45,7 +45,7 @@ wss.on('connection', (ws) => {
 
             // Adjust path to your compiled binary
             captureProcess = spawn('./parser', args, {
-                cwd: path.join(__dirname, '..', 'engine')
+                cwd: path.join(__dirname, '..', 'engine', 'src')
             });
 
             captureProcess.stdout.on('data', (data) => {
