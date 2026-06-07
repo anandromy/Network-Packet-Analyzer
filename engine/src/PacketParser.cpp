@@ -55,12 +55,9 @@ void PacketParser::parsePacket(const unsigned char* pkt,
     }
 
     unsigned short etherType = (pkt[12] << 8) | pkt[13];
-    if (etherType != 0x0800) {
-        emitPacket(stats, len, "OTHER");
-        return;
-    }
+    if (etherType != 0x0800) return;
 
-    if (len < 34) { emitPacket(stats, len, "OTHER"); return; }
+    if (len < 34) return;
 
     const unsigned char* ip = pkt + 14;
     unsigned int ipHLen     = (ip[0] & 0x0F) * 4;
@@ -71,6 +68,9 @@ void PacketParser::parsePacket(const unsigned char* pkt,
         const unsigned char* tcp = ip + ipHLen;
         int src = (tcp[0] << 8) | tcp[1];
         int dst = (tcp[2] << 8) | tcp[3];
+
+        if (src != 3000 && dst != 3000) return;
+
         emitPacket(stats, len, "TCP", src, dst);
     }
     else if (proto == 17 && len >= 14u + ipHLen + 4u) {
@@ -83,9 +83,6 @@ void PacketParser::parsePacket(const unsigned char* pkt,
     else if (proto == 1) {
         stats.icmp++;
         emitPacket(stats, len, "ICMP");
-    }
-    else {
-        emitPacket(stats, len, "OTHER");
     }
 }
 
